@@ -12,7 +12,10 @@ This file contains utility functions that are used by both the jobExecutorServer
 #include <queue>
 #include <mutex>
 
-using namespace std;
+using std::string;
+using std::vector;
+using std::queue;
+using std::mutex;
 
 // A job is a triple: jobID, command, status, queuePosition.
 struct Job {

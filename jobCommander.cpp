@@ -22,8 +22,6 @@
 
 #include "Util.h"
 
-using namespace std;
-
 int main(int argc, char *argv[]) 
 {
     // Parse the command line arguments.

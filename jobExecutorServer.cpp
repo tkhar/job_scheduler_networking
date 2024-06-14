@@ -210,7 +210,7 @@ void issueJob(
         jobMutex.unlock();
 
         // Run the job in a separate thread.
-        thread t(runJob, job);
+        std::thread t(runJob, job);
         t.detach();
     }
 }
@@ -302,7 +302,7 @@ void poll(
         printf("Polling running jobs.\n");
         jobMutex.lock();
 
-        string output = "Number of running jobs: " + to_string(runningJobs.size()) + "\n";
+        string output = "Number of running jobs: " + std::to_string(runningJobs.size()) + "\n";
         n = write(newsockfd, output.c_str(), output.length());
         if (n < 0) 
         {
@@ -317,7 +317,7 @@ void poll(
         printf("Polling queued jobs.\n");
         jobMutex.lock();
 
-        string output = "Number of queued jobs: " + to_string(jobQueue.size()) + "\n";
+        string output = "Number of queued jobs: " + std::to_string(jobQueue.size()) + "\n";
 
         queue<Job> jobQueueCopy = jobQueue;
 
@@ -326,7 +326,7 @@ void poll(
             Job job = jobQueueCopy.front();
             jobQueueCopy.pop();
 
-            output += "Job " + to_string(job.jobID) + ": " + job.command + "\n";
+            output += "Job " + std::to_string(job.jobID) + ": " + job.command + "\n";
         }
 
         n = write(newsockfd, output.c_str(), output.length());
