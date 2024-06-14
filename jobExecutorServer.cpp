@@ -31,7 +31,7 @@
 void runJob(Job job);
 
 /*
-    This function dequeues a job from the jobQueue and runs it.
+    This function dequeues a job from the jobQueue and runs it in a separate worker thread.
 */
 void dequeueAndRunJob(      
     bool lock = true
@@ -74,9 +74,14 @@ void dequeueAndRunJob(
     }
 }
 
-void runJob(
-    int newsockfd,
-    Job job)
+/*
+    This function runs a job.
+    It is called by a worker thread.
+    Arguments:
+    - newsockfd: the socket file descriptor. The output of the job is written to this socket.
+    - job: the job to run.
+*/
+void runJob(Job job)
 {
     printf("Running job %d: %s\n", job.jobID, job.command.c_str());
 
@@ -91,7 +96,7 @@ void runJob(
         printf("Executing job %d: %s\n", job.jobID, job.command.c_str());
 
         // Redirect stdout to the socket.
-        int o = dup2(newsockfd, STDOUT_FILENO);
+        int o = dup2(job.socketFd, STDOUT_FILENO);
 
         if(o == -1)
         {
@@ -111,7 +116,7 @@ void runJob(
         // Parent process. This process waits for the child process to finish.
 
         // Close the socket in the parent process.
-        close(newsockfd);
+        close(job.socketFd);
 
         for (int i = 0; i < runningJobs.size(); i++)
         {
@@ -125,6 +130,8 @@ void runJob(
         // Wait for the child process to finish.
         int status;
         waitpid(pid, &status, 0);
+
+        // Job is done.
 
         // Remove the job from the running jobs vector.
         jobMutex.lock();
@@ -176,6 +183,7 @@ void issueJob(
     Job job;
     job.jobID = jobID++;
     job.command.assign(command_line);
+    job.socketFd = newsockfd;
 
     printf("Running jobs: %d\n", (int)runningJobs.size());
 
@@ -202,7 +210,8 @@ void issueJob(
         jobMutex.unlock();
 
         // Run the job in a separate thread.
-        runJob(newsockfd, job);
+        thread t(runJob, job);
+        t.detach();
     }
 }
 
@@ -228,7 +237,6 @@ void setConcurrency(string arguments)
 }
 
 void stopJob(
-    int newsockfd,
     string arguments) 
 {
     int n;
@@ -348,6 +356,7 @@ void handleCommand(int *newsockfd_ptr, int buffer_size)
     int n;
     char buffer[buffer_size];
 
+    // Read the command from the socket.
     bzero(buffer, buffer_size);
     n = read(newsockfd, buffer, buffer_size - 1);
     if (n < 0) 
@@ -378,6 +387,7 @@ void handleCommand(int *newsockfd_ptr, int buffer_size)
     // Now we have the command and arguments.
     if (command == "issueJob") 
     {
+        // Issue the job in a controller thread.
         std::thread t(issueJob, newsockfd, arguments);
 
         // Wait for the thread to finish.
@@ -389,7 +399,7 @@ void handleCommand(int *newsockfd_ptr, int buffer_size)
     }
     else if (command == "stop") 
     {
-        stopJob(newsockfd, arguments);
+        stopJob(arguments);
     }
     else if (command == "poll") 
     {

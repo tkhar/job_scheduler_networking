@@ -20,7 +20,8 @@ struct Job {
     string command;
     string status;
     int queuePosition;
-    string output_pipe;
+    
+    int socketFd;
 
     // When a job is running, save its PID.
     int running_pid;
