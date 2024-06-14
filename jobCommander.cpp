@@ -16,6 +16,9 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
 
 #include "Util.h"
 
@@ -23,98 +26,87 @@ using namespace std;
 
 int main(int argc, char *argv[]) 
 {
-    char *command;
-
     // Parse the command line arguments.
-    if (argc < 2) {
-        printf("Usage: jobCommander <command>\n");
+    if (argc < 4) {
+        printf("Usage: jobCommander <server_name> <port_number> <command>\n");
         exit(1);
     }
 
-    // Check if the jobExecutorServer.txt file exists.
-    // If not, run the jobExecutorServer program.
-    FILE *file = fopen("jobExecutorServer.txt", "r");
-    if (file == NULL) {
-        printf("Error: jobExecutorServer is not running.\n");
-    
-        // Run the jobExecutorServer program via fork and exec.
-        pid_t pid = fork();
-        if (pid == 0) {
-            execl("./jobExecutorServer", "jobExecutorServer", NULL);
-        }
-        else
-        {
-            // Wait for the jobExecutorServer to start.
-            sleep(1);
-        }
+    // The server name and port number are the first two arguments.
+    string server_name = string(argv[1]);
+    string port_number = string(argv[2]);
+
+    // The command is the third argument.
+    string command = string(argv[3]);
+
+    // Connect to the server via a socket.
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        perror("Error opening socket");
+        exit(1);
     }
 
-    // Close the file.
-    fclose(file);
+    struct hostent *server = gethostbyname(server_name.c_str());
+    if (server == NULL) {
+        fprintf(stderr, "Error, no such host\n");
+        exit(1);
+    }
 
-    command = argv[1];
+    struct sockaddr_in serv_addr;
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(atoi(port_number.c_str()));
+    bcopy((char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr, server->h_length);
 
-    // Create a named pipe to communicate with the jobExecutorServer.
-    int fd;
-    const char *pipe = "/tmp/jobCommanderPipe";
+    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        perror("Error connecting");
+        exit(1);
+    }
 
-    // Give the output pipe the name /tmp/jobCommanderPipeOutput + PID.
-    int fd_output;
-    char pipe_output[100];
-    snprintf(pipe_output, sizeof(pipe_output), "/tmp/jobCommanderPipeOutput%d", getpid());
-
-    // Create the named pipe.
-    mkfifo(pipe_output, 0666);
-
-    // Open the pipe for reading.
-    fd_output = open(pipe_output, O_RDONLY | O_NONBLOCK);
+    // We have now connected to the server.
+    // We are ready to send and receive messages.
 
     // Issue a job to the job scheduler.
-    if (strcmp(command, "issueJob") == 0) 
+    if (command == "issueJob") 
     {
-        if (argc < 3) {
-            printf("Usage: jobCommander issueJob <job>\n");
+        if (argc < 5) {
+            printf("Usage: jobCommander <server_name> <port_number> issueJob <job>\n");
             exit(1);
         }
 
-        // The command starts with the output pipe name
-        string issue_job_command = pipe_output;
-
-        // The command is issueJob and the arguments is the concatenation of 
-        // the remaining strings argv[2], argv[3], ...
-        issue_job_command += " issueJob " + string(argv[2]);
-        for (int i = 3; i < argc; i++) {
-            issue_job_command += " ";
-            issue_job_command += string(argv[i]);
+        // The command is "issueJob" and the arguments is the concatenation of 
+        // the rest of the command line arguments.
+        string issue_job_command = "issueJob ";
+        for (int i = 4; i < argc; i++) {
+            issue_job_command += string(argv[i]) + " ";
         }
 
         printf("Issuing job: %s\n", issue_job_command.c_str());
 
-        // Open the pipe and write the command to it.
-        fd = open(pipe, O_WRONLY);
-        write(fd, issue_job_command.c_str(), issue_job_command.length() + 1);
-        close(fd);
+        // Send the command to the server.
+        int n = write(sockfd, issue_job_command.c_str(), issue_job_command.length());
+        if (n < 0) {
+            perror("Error writing to socket");
+            exit(1);
+        }
     }
-    else if(strcmp(command, "setConcurrency") == 0)
+    else if(command == "setConcurrency")
     {
-        if (argc < 3) {
+        if (argc < 5) {
             printf("Usage: jobCommander setConcurrency <N>\n");
             exit(1);
         }
         printf("Setting concurrency to: %s\n", argv[2]);
 
-        // Concatenate the command and the concurrency level.
-        string concurrency = string(argv[2]);
-        string set_concurrency_command;
-        set_concurrency_command.assign(pipe_output);
-        set_concurrency_command += " setConcurrency " + concurrency;
+        string set_concurrency_command = "setConcurrency " + string(argv[4]);
 
-        // Open the pipe and write the command to it.
-        fd = open(pipe, O_WRONLY);
-        write(fd, set_concurrency_command.c_str(), set_concurrency_command.length() + 1);
-        close(fd);
+        // Send the command to the server.
+        int n = write(sockfd, set_concurrency_command.c_str(), set_concurrency_command.length());
+        if (n < 0) {
+            perror("Error writing to socket");
+            exit(1);
+        }
     }
-    else if(strcmp(command, "stop") == 0)
+    else if(command == "stop")
     {
         if (argc < 3) {
             printf("Usage: jobCommander stop <jobID>\n");
@@ -122,83 +114,71 @@ int main(int argc, char *argv[])
         }
         printf("Stopping job: %s\n", argv[2]);
 
-        // Concatenate the command and the job ID.
-        string jobID = string(argv[2]);
+        string stop_job_command = "stop " + string(argv[4]);
 
-        string stop_job_command;
-        stop_job_command.assign(pipe_output);
-        stop_job_command += " stop " + jobID;
-
-        // Open the pipe and write the command to it.
-        fd = open(pipe, O_WRONLY);
-        write(fd, stop_job_command.c_str(), stop_job_command.length() + 1);
-        close(fd);
+        // Send the command to the server.
+        int n = write(sockfd, stop_job_command.c_str(), stop_job_command.length());
+        if (n < 0) {
+            perror("Error writing to socket");
+            exit(1);
+        }
     }
-    else if(strcmp(command, "poll") == 0)
+    else if(command == "poll")
     {
-        if (argc < 3) {
+        if (argc < 5) {
             printf("Usage: jobCommander poll [running,queued]\n");
             exit(1);
         }
         printf("Polling: %s\n", argv[2]);
 
-        // Concatenate the command and the status.
-        string status = string(argv[2]);
+        string poll_command = "poll " + string(argv[4]);
 
-        // The poll command first contains the output pipe 
-        // and then the poll command and the status.
-        string poll_command;
-        poll_command.assign(pipe_output);
-        poll_command += " poll " + status;
-
-        // Open the pipe and write the command to it.
-        fd = open(pipe, O_WRONLY);
-        write(fd, poll_command.c_str(), poll_command.length() + 1);
-        close(fd);
+        // Send the command to the server.
+        int n = write(sockfd, poll_command.c_str(), poll_command.length());
+        if (n < 0) {
+            perror("Error writing to socket");
+            exit(1);
+        }
     }
-    else if(strcmp(command, "exit") == 0)
+    else if(command == "exit")
     {
         printf("Exiting jobExecutorServer\n");
 
-        string exit_command;
-        exit_command.assign(pipe_output);
-        exit_command += " exit";
+        string exit_command = "exit";
 
-        // Open the pipe and write the command to it.
-        fd = open(pipe, O_WRONLY);
-        write(fd, exit_command.c_str(), exit_command.length() + 1);
-        close(fd);
+        // Send the command to the server.
+        int n = write(sockfd, exit_command.c_str(), exit_command.length());
+        if (n < 0) {
+            perror("Error writing to socket");
+            exit(1);
+        }
     }
     else
     {
         printf("Invalid command\n");
     }
 
-    // Keep reading from the output pipe until we get the message "Done"
-    while(true)
-    {
-        // Read the output from the pipe.
-        char buffer[1024 * 1024];
-        while (read(fd_output, buffer, sizeof(buffer)) <= 0) {
-            sleep(1);
+    // Read the server's response. Keep reading until the server sends "Done."
+    char buffer[256];
+    bzero(buffer, 256);
+    while (true) {
+        int n = read(sockfd, buffer, 255);
+        if (n < 0) {
+            perror("Error reading from socket");
+            exit(1);
         }
 
-        // If buffer contains "Done" as a substring, break.
-        string output(buffer);
-        if (output.find("Done") != string::npos) {
+        printf("%s", buffer);
+
+        if (strstr(buffer, "Done.") != NULL) {
             break;
         }
 
-
-        // Print the output.
-        printf("%s", output.c_str());
+        bzero(buffer, 256);
     }
 
-    // Close the pipe.
-    close(fd_output);
-
-    // Remove the named pipe.
-    unlink(pipe_output);
+    // Close the socket.
+    close(sockfd);
 
     return 0;
 }
