@@ -94,6 +94,7 @@ void runJob(Job job)
     {
         // Child process. This process runs the job.
         printf("Executing job %d: %s\n", job.jobID, job.command.c_str());
+        printf("The socket fd is %d\n", job.socketFd);
 
         // Redirect stdout to the socket.
         int o = dup2(job.socketFd, STDOUT_FILENO);
@@ -115,9 +116,6 @@ void runJob(Job job)
     {
         // Parent process. This process waits for the child process to finish.
 
-        // Close the socket in the parent process.
-        close(job.socketFd);
-
         for (int i = 0; i < runningJobs.size(); i++)
         {
             if (runningJobs[i].jobID == job.jobID)
@@ -132,6 +130,17 @@ void runJob(Job job)
         waitpid(pid, &status, 0);
 
         // Job is done.
+
+        // Notify the client that the job is done.
+        int n = write(job.socketFd, "Done", 4);
+        if (n < 0) 
+        {
+            printf("Error: writing to socket.\n");
+            exit(1);
+        }
+
+        printf("Closing the socket to the client.\n");
+        close(job.socketFd);
 
         // Remove the job from the running jobs vector.
         jobMutex.lock();
@@ -310,6 +319,8 @@ void poll(
             exit(1);
         }
 
+        printf("%s\n", output.c_str());
+
         jobMutex.unlock();
     }
     else if(arguments == "queued")
@@ -343,6 +354,8 @@ void poll(
         printf("Invalid argument: %s\n", arguments.c_str());
     
     }
+
+    printf("Done polling.\n");
 }
 
 /*
@@ -350,6 +363,12 @@ void poll(
 */
 void handleCommand(int *newsockfd_ptr, int buffer_size) 
 {
+    // If we are exiting we won't be able to add more jobs. 
+    if (exiting)
+    {
+        return;
+    }
+
     int newsockfd = *newsockfd_ptr;
     free(newsockfd_ptr);
 
@@ -384,9 +403,13 @@ void handleCommand(int *newsockfd_ptr, int buffer_size)
         command = buffer_str;
     }
 
+    bool isIssueCommand = false;
+
     // Now we have the command and arguments.
     if (command == "issueJob") 
     {
+        isIssueCommand = true;
+
         // Issue the job in a controller thread.
         std::thread t(issueJob, newsockfd, arguments);
 
@@ -409,6 +432,10 @@ void handleCommand(int *newsockfd_ptr, int buffer_size)
     {
         printf("Exiting.\n");
         exiting = true;
+
+        // We have to wait for all running jobs to finish. 
+        // Waiting until the running jobs vector is empty is enough.
+        while(!runningJobs.empty());
     }
     else
     {
@@ -422,14 +449,24 @@ void handleCommand(int *newsockfd_ptr, int buffer_size)
 
     // Before closing the socket, send a message to the jobCommander that the command is done.
     // This is necessary because the jobCommander is blocked on the read() call.
-    n = write(newsockfd, "Done", 4);
-    if (n < 0) 
+    // The issueJob command does this by itself.
+    if (!isIssueCommand)
     {
-        printf("Error: writing to socket.\n");
-        exit(1);
+        n = write(newsockfd, "Done", 4);
+        if (n < 0) 
+        {
+            printf("Error: writing to socket.\n");
+            exit(1);
+        }
+
+        close(newsockfd);
     }
 
-    close(newsockfd);
+    // Now that all jobs have completed we exit.
+    if (exiting)
+    {
+        exit(1);
+    }
 }
 
 int main(int argc, char *argv[]) 
@@ -466,6 +503,8 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+    concurrencyLevel = threadPoolSize;
+
     // Create a socket.
     int sockfd, n;
     socklen_t clilen;
@@ -496,7 +535,9 @@ int main(int argc, char *argv[])
     listen(sockfd, 5);
     clilen = sizeof(cli_addr);
 
-    while(!exiting)
+    printf("Listening for connections on port %d\n`", portnum);
+
+    while(true)
     {
         // Accept a connection from a jobCommander.
         int *newsockfd_ptr = (int *)malloc(sizeof(int));

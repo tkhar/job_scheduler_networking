@@ -93,7 +93,7 @@ int main(int argc, char *argv[])
             printf("Usage: jobCommander setConcurrency <N>\n");
             exit(1);
         }
-        printf("Setting concurrency to: %s\n", argv[2]);
+        printf("Setting concurrency to: %s\n", argv[4]);
 
         string set_concurrency_command = "setConcurrency " + string(argv[4]);
 
@@ -127,7 +127,7 @@ int main(int argc, char *argv[])
             printf("Usage: jobCommander poll [running,queued]\n");
             exit(1);
         }
-        printf("Polling: %s\n", argv[2]);
+        printf("Polling: %s\n", argv[4]);
 
         string poll_command = "poll " + string(argv[4]);
 
@@ -166,11 +166,11 @@ int main(int argc, char *argv[])
             exit(1);
         }
 
-        printf("%s", buffer);
-
-        if (strstr(buffer, "Done.") != NULL) {
+        if (strstr(buffer, "Done") != NULL) {
             break;
         }
+
+        printf("%s", buffer);
 
         bzero(buffer, 256);
     }
